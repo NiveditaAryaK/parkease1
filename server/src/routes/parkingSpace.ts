@@ -9,6 +9,7 @@ import { history } from "../schema/history";
 import { and, eq, isNull, not } from "drizzle-orm";
 import { db } from "../utils/db";
 import { users } from "../schema/users";
+import redlock from "../utils/redlock";
 
 const router = new Hono();
 
@@ -18,51 +19,68 @@ router.post(
   validator("param", ReserveParkingSpaceParamSchema),
   async (c) => {
     const { parkingSpaceId } = c.req.valid("param");
-
     const { email } = c.get("jwtPayload");
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    if (!user) {
-      return c.json({
-        success: false,
-        error: "User not found",
-      });
+    const lockKey = `lock:parkingSpace:${parkingSpaceId}`;
+
+    try {
+      const lock = await redlock.acquire([lockKey], 10_000);
+      try {
+        const [user] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, email));
+
+        if (!user) {
+          await lock.release();
+          return c.json({ success: false, error: "User not found" });
+        }
+        const [requestedParkingSpace] = await db
+          .select()
+          .from(parkingSpace)
+          .where(eq(parkingSpace.id, parkingSpaceId));
+
+        if (!requestedParkingSpace || !requestedParkingSpace.isAvailable) {
+          await lock.release();
+          return c.json({ success: false, error: "Parking space unavailable" });
+        }
+
+        const updatedParkingSpace = await db.transaction(async (trx) => {
+          const [updatedParkingSpace] = await trx
+            .update(parkingSpace)
+            .set({ isAvailable: false })
+            .where(eq(parkingSpace.id, parkingSpaceId))
+            .returning();
+
+          await trx.insert(history).values({
+            userId: user.id,
+            parkingSpaceId,
+            parkingLotId: requestedParkingSpace.parkingLotId,
+          });
+
+          return updatedParkingSpace;
+        });
+
+        await lock.release();
+        return c.json({
+          success: true,
+          message: "Successfully updated parking space",
+          data: { space: updatedParkingSpace },
+        });
+      } catch (dbError) {
+        await lock.release();
+        throw dbError;
+      }
+    } catch (lockError) {
+      return c.json(
+        {
+          success: false,
+          error: "Reservation already in progress, please try again later",
+        },
+        423
+      );
     }
-
-    const [requestedParkingSpace] = await db
-      .select()
-      .from(parkingSpace)
-      .where(eq(parkingSpace.id, parkingSpaceId));
-    if (!requestedParkingSpace) {
-      return c.json({
-        success: false,
-        error: "Parking space not found",
-      });
-    }
-
-    const updatedParkingSpace = await db.transaction(async (trx) => {
-      const [updatedParkingSpace] = await trx
-        .update(parkingSpace)
-        .set({ isAvailable: false })
-        .where(eq(parkingSpace.id, parkingSpaceId))
-        .returning();
-
-      await trx.insert(history).values({
-        userId: user.id,
-        parkingSpaceId,
-        parkingLotId: requestedParkingSpace.parkingLotId,
-      });
-
-      return updatedParkingSpace;
-    });
-
-    return c.json({
-      success: true,
-      message: "Successfully updated parking space",
-      data: { space: updatedParkingSpace },
-    });
   }
 );
-
 router.post(
   "/:parkingSpaceId/end",
   authenticateUser,
