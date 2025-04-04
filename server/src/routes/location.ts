@@ -16,6 +16,7 @@ import {
   parkingSpace,
 } from "../schema/parkingSpace";
 import { eq, and, sql } from "drizzle-orm";
+import { redis } from "../utils/redis";
 
 const router = new Hono();
 
@@ -79,10 +80,22 @@ router.get(
       .from(parkingSpace)
       .where(eq(parkingSpace.parkingLotId, parkingLotId));
 
+    const updatedSpaces = await Promise.all(
+      parkingSpaces.map(async (space) => {
+        const lockKey = `lock:space:${space.id}`;
+        const isLocked = await redis.get(lockKey);
+
+        return {
+          ...space,
+          isAvailable: space.isAvailable && !isLocked,
+        };
+      })
+    );
+
     return c.json({
       success: true,
       message: "Successfully fetched parking spaces",
-      data: { parkingLot: requestedParkingLot, spaces: parkingSpaces },
+      data: { parkingLot: requestedParkingLot, spaces: updatedSpaces },
     });
   }
 );
@@ -132,7 +145,7 @@ router.post(
       async (trx) => {
         const [updatedParkingSpace] = await trx
           .insert(parkingSpace)
-          .values({ parkingLotId, row, column })
+          .values({ type: "standard", parkingLotId, row, column })
           .returning();
 
         const [updatedParkingLot] = await trx

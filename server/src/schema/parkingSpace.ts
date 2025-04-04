@@ -5,6 +5,7 @@ import {
   boolean,
   integer,
   unique,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { parkingLot } from "./parkingLot";
 import { z } from "zod";
@@ -20,6 +21,7 @@ export const parkingSpace = pgTable(
     column: integer("column").notNull(),
     isAvailable: boolean("is_available").default(true),
     createdAt: timestamp("created_at").defaultNow(),
+    type: varchar("type", { length: 64 }).notNull(),
   },
   (t) => ({ ak: unique().on(t.parkingLotId, t.row, t.column) })
 );
@@ -35,8 +37,9 @@ export const AddParkingSpaceParamSchema = z.object({
 export const AddParkingSpaceBodySchema = z.object({
   row: z.number({ message: "Row is a required field" }),
   column: z.number({ message: "Column is a required field" }),
+  type: z.string({ message: "Type is a required field" }),
 });
 
 export const ReserveParkingSpaceParamSchema = z.object({
-  parkingSpaceId: z.string({ message: "Parking Space ID is a required field" })
-})
+  parkingSpaceId: z.string({ message: "Parking Space ID is a required field" }),
+});
