@@ -20,11 +20,14 @@ router.post(
   validator("param", ReserveParkingSpaceParamSchema),
   async (c) => {
     console.log("Lock handler reached with ID:", c.req.param("parkingSpaceId"));
+
     const { parkingSpaceId } = c.req.valid("param");
     const { email } = c.get("jwtPayload");
 
+    const concurrencyLockKey = `redlock:space:${parkingSpaceId}`;
+
     const userLockKey = `lock:user:${email}`;
-    const spaceLockKey = `lock:space:${parkingSpaceId}`;
+    const holdKey = `hold:space:${parkingSpaceId}`;
 
     const [space] = await db
       .select({
@@ -48,23 +51,22 @@ router.post(
 
       if (lockedSpace?.type === space.type) {
         return c.json(
-          {
-            success: false,
-            error: "You already locked a space of this type",
-          },
+          { success: false, error: "You already locked a space of this type" },
           409
         );
       }
     }
 
     try {
-      const lock = await redlock.acquire([spaceLockKey], 60_000);
+      const lock = await redlock.acquire([concurrencyLockKey], 5_000);
+
       try {
         await redis.set(userLockKey, parkingSpaceId, "EX", 60);
+        await redis.set(holdKey, email, "EX", 60);
 
         return c.json({
           success: true,
-          message: "Space locked for 60 seconds",
+          message: "Space locked for 60 seconds (soft hold)",
           data: { spaceId: parkingSpaceId, type: space.type },
         });
       } finally {

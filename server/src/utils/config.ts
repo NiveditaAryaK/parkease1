@@ -13,6 +13,8 @@ const configSchema = z.object({
   FROM_MAIL: z.string(),
   FROM_NAME: z.string(),
   VERIFY_EMAIL: z.string().transform((val) => val === "true"),
+  REDIS_HOST: z.string().default("127.0.0.1"),
+  REDIS_PORT: z.string().default("6379"),
 });
 
 export const {
@@ -26,4 +28,6 @@ export const {
   FROM_MAIL,
   FROM_NAME,
   VERIFY_EMAIL,
+  REDIS_HOST,
+  REDIS_PORT,
 } = configSchema.parse(Bun.env);

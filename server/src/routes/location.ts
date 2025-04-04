@@ -82,12 +82,11 @@ router.get(
 
     const updatedSpaces = await Promise.all(
       parkingSpaces.map(async (space) => {
-        const lockKey = `lock:space:${space.id}`;
-        const isLocked = await redis.get(lockKey);
-
+        const holdKey = `hold:space:${space.id}`;
+        const lockedBy = await redis.get(holdKey);
         return {
           ...space,
-          isAvailable: space.isAvailable && !isLocked,
+          isAvailable: space.isAvailable && !lockedBy,
         };
       })
     );
